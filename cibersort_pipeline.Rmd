@@ -19,71 +19,90 @@ We got our data from 10x genomics, [Human PBMCs Labelled With Extracellular and 
 The first step is to load in data, which Seurat handles.
 
 ```{r}
-sparse <- Read10X_h5(filename = "pbmc8k_raw_gene_bc_matrices_h5.h5")
+pbmc.data <- Read10X_h5(filename = "pbmc8k_raw_gene_bc_matrices_h5.h5")
 ```
 
 This has multiple modalities, so we can use a str() to observe
 
 ```{r}
-str(sparse)
+str(pbmc)
 ```
 
 We want gene expression, so let's select it (In this instance, we only have gene expression - no need for this step)
 
 ```{r}
-# counts <- sparse$`Gene Expression`
+# counts <- pbmc$`Gene Expression`
 # counts
 ```
 
 We can now initialize the Seurat object
 
 ```{r}
-sparse <- CreateSeuratObject(counts = sparse, project = "PBMC", min.cells = 3, min.features = 200)
-str(sparse)
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "PBMC", min.cells = 3, min.features = 200)
+# str(pbmc)
 ```
 
 ## QC
 
 QC is always crucial!
 
+A few commonly used QC metrics include
+
+1.  Number of unique genes in each cell
+
+    1.  Low-quality cells will have very few genes
+
+    2.  Cell doublets or multiplets will have a very high gene count
+
+2.  Number of molecules detected in a cell
+
+3.  Percentage of reads that map to mitochondrial genome
+
+    1.  Low-quality cells will have lots of mitochondrial contamination
+
+    2.  We use `PercentageFeatureSet()` which allows us to calculate the percentage of counts originating from whatever set of features we want. For mitochondrial counts, we use the set of all genes starting with `MT-` .
+
+Note: QC metrics are stored in `[Seurat object]@meta.data`
+
+This data looks pretty good, but if we see something in the bottom right or or top left that doesn't fit this log curve, you should probably filter it out.
+
 ### MT Reads
 
 We basically want to filter out cells which have really low number of counts. This is indicative of a bad read because the cell was not read fully or the gene died (due to higher mitochondrial stress). We also want to filter out high number of counts because that could mean that the cell was read 2x or was read alongside another cell (aka made a doublet).
 
 ```{r}
-view(sparse@meta.data)
+view(pbmc@meta.data)
 ```
 
 ```{r}
-sparse[["percent.mt"]] <- PercentageFeatureSet(sparse, pattern = "^MT-") # save percentage of mitochondrial reads as another variable in metadata
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-") # save percentage of mitochondrial reads as another variable in metadata
 ```
 
-We can also visualize our data using VlnPlot, a built-in function from Seurat. We then use a FeatureScatter to create a scatter plot of nCount and nFeatures. Hypothetically, cells with a high count should also have a high number of genes (features).
+We can visualize our data using VlnPlot, a built-in function from Seurat. This is an intuitive way to visualize our QC metrics.
+
+We can then use a FeatureScatter to create a scatter plot of nCount and nFeatures. `FeatureScatter` is typically used to visualize feature-feature relationships but can be used for anything calculated by the object. Hypothetically, cells with a high count should also have a high number of genes (features).
 
 ```{r}
-VlnPlot(sparse, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
-FeatureScatter(sparse, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
-  geom_smooth(method = 'lm') # line of best fit
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +   geom_smooth(method = 'lm') # line of best fit
 ```
-
-This data looks pretty good, but if we see something in the bottom right or or top left that doesn't fit this log curve, you should probably filter it out.
 
 ### Filtering
 
 We now filter out our "bad" reads. In this instance, we only keep cells with more than 500 but less than 3500 genes and cells with more than 1% mito reads but less than 10% mito reads. This is as per the supplementary methods outlined in [Determining cell type abundance and expression from bulk tissues with digital cytometry](https://www.nature.com/articles/s41587-019-0114-2).
 
 ```{r}
-sparse <- subset(sparse, subset = nFeature_RNA > 200 & nFeature_RNA <  2500 & percent.mt < 10 & percent.mt > 1)
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA <  2500 & percent.mt < 10 & percent.mt > 1)
 ```
 
 We're not going to do it here, but we can use the "doublet finder" package to find doublets. In this tutorial, we will just filter out based on percent mito reads.
 
-## Normalize Data
+## Normalize Data (WIP)
 
 Seurat has a built-in function to normalize data.
 
 ```{r}
-sparse <- NormalizeData(sparse)
+pbmc <- NormalizeData(pbmc)
 ```
 
 ### Observing Commands Using @commands
@@ -91,22 +110,22 @@ sparse <- NormalizeData(sparse)
 We can observe all of the post processing that we've done on the Seurat object by looking for the @commands in the Seurat object.
 
 ```{r}
-str(sparse)
+str(pbmc)
 ```
 
 ## Identify Highly Variable Features
 
-We want to identify highly variable features because it has been found that focusing on just these features shows a higher degree of significance at the end. We can use the FindVariableFeatures function built into Seurat.
+We want to identify highly variable features (i.e. features that are highly expressed in some cells and not highly expressed in others). We can use the FindVariableFeatures function built into Seurat.
 
 ```{r}
-sparse <- FindVariableFeatures(sparse, selection.method = "vst", nfeatures = 2000) # default settings
-top10 <- head(VariableFeatures(sparse), 10) # VariableFeatures lets us observe the top variable features
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000) # default settings
+top10 <- head(VariableFeatures(pbmc), 10) # VariableFeatures lets us observe the top variable features
 ```
 
 We can now visualize these features using VariableFeaturePlot
 
 ```{r}
-plot1 <- VariableFeaturePlot(sparse)
+plot1 <- VariableFeaturePlot(pbmc)
 LabelPoints(plot = plot1, points = top10, repel = T)
 ```
 
@@ -116,101 +135,143 @@ We can now see the most variable genes.
 
 In sc dataset, there is lots of inherent noise from stages in cell cycle, batch noise, etc. We want to make sure that clustering downstream is because of gene expression and not any of the aforementioned effects. To prevent this, we do scaling.
 
+The `ScaleData()` function
+
+-   Shifts expression of each gene so that mean expression across cells is 0
+
+-   Scales expression of each gene so that the variance across cells is 1
+
+    -   Allows highly-expressed genes to not dominate analysis
+
+The results are stored in `[Seurat Object][["RNA"]]$scale.data`. By default, only variable features are scaled but we can specify `features` to scale additional features.
+
 In the aforementioned paper, they scale based on the number of UMIs (nFeature_RNA) and percentage of mitochondrial content (percent.mt, defined earlier).
 
 ```{r}
-all.genes <- rownames(sparse)
-sparse <- ScaleData(sparse, vars.to.regress = c("nFeature_RNA", "percent.mt"))
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, vars.to.regress = c("nFeature_RNA", "percent.mt"))
 ```
 
 Let's do another check on our Seurat object.
 
 ```{r}
-str(sparse)
+str(pbmc)
 ```
 
-Just as a review, **under RNA Assay we have \@ counts which is the raw sparse matrix, \@ data which tells us the log normalized counts, and \@ scale.data is the same as data but scaled** as in this step.
+Just as a review, **under RNA Assay we have \@ counts which is the raw pbmc matrix, \@ data which tells us the log normalized counts, and \@ scale.data is the same as data but scaled** as in this step.
 
 ## Linear Dimensionality Reduction
 
-We can now run PCA, which we need to do before clustering.
+We can now run PCA, which we need to do before clustering. Seurat will use previously determined variable features as input, but this can be manually defined using the `features` argument passed to `ScaleData`.
 
 ```{r}
-sparse <- RunPCA(sparse, features = VariableFeatures(object = sparse))
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
 ```
 
 Let's visualize the principle components.
 
 ```{r}
-print(sparse[["pca"]], dims = 1:5, nfeatures = 5)
-DimHeatmap(sparse, dims = 1, cells = 500, balanced = T)
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+```{r}
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca")
+```
+
+```{r}
+DimPlot(pbmc, reduction = "pca") + NoLegend()
+```
+
+These visualizations allow us to easily visualize the respective cell types.
+
+The best way to explore this heterogeneity is `DimHeatmap()`, which allows us to explore the primary sources of heterogeneity in a dataset. The `cells` parameter tells Seurat what number of cells to plot and will choose the highest variance cells in the set.
+
+```{r}
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = T) # balanced plots an equal number of + and - cells
+```
+
+```{r}
+DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = T) # balanced plots an equal number of + and - cells
 ```
 
 This shows us the heterogeneity of the matrix.
 
+## Determining the Dimensionality of the Dataset
+
 We can create an Elbow Plot that tells us the dimensionality of each of the PCs.
 
 ```{r}
-ElbowPlot(sparse)
+ElbowPlot(pbmc)
 ```
 
 It looks like we only need to consider about 15 PCs to describe the dataset, but we're going to go with what the paper had which was 10.
 
 ## Clustering
 
-In the previous step, we determined that we need about 15 PCs to describe the dataset, so that is the dimensionality parameter we will use with the Seurat FindNeighbors function for clustering.
+In the previous step, we determined that we need about 10 PCs to describe the dataset, so that is the dimensionality parameter we will use with the Seurat `FindNeighbors()` function. This step creates a KNN graph in an attempt to partition the graph into "communities". The actual method is somewhat complex, so refer to [this article](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html) for more info.
 
 ```{r}
-sparse <- FindNeighbors(sparse, dims = 1:10)
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
 ```
 
-We will use resolution = 0.8.
+To cluster, we use `FindClusters()`. We will use resolution = 0.8.
 
 ```{r}
-sparse <- FindClusters(sparse, resolution = 0.8)
-# View(sparse@meta.data) # look at the different clusters
+pbmc <- FindClusters(pbmc, resolution = 0.2)
+# View(pbmc@meta.data) # look at the different clusters
+```
+
+The clusters can be found using the Idents() function.
+
+```{r}
+head(Idents(pbmc), 5) 
 ```
 
 We want to now see what has the best clustering. To do this, we can use a DimPlot to visualize the results.
 
 ```{r}
-DimPlot(sparse, group.by = "RNA_snn_res.0.8", label = T)
+DimPlot(pbmc, group.by = "RNA_snn_res.0.2", label = T)
 ```
 
 .05 looks the best. Let's assign that as the "correct" clustering.
 
 ```{r}
-Idents(sparse) <- "RNA_snn_res.0.8"
-# Idents(sparse) look at the assignments
+Idents(pbmc) <- "RNA_snn_res.0.8"
+# Idents(pbmc) look at the assignments
 ```
 
-## Assigning Cell Types
+## Run Non-linear Dimensional Reduction (UMAP/tSNE)
 
-We now want to associate cell types with gene markers. We use AddModuleScore to calculate the average expression levels of each gene listed for each cell subtracted by an average background score based on random control genes. The paper notes that MS4A1 high is used to identify B cells and CD8A high and GNLY low are used to identify CD8 T Cells for example.
+Non-linear dimensional reduction techniques are useful to explore and visualize the dataset. These are very useful for exploring the dataset but may not be great for actual analysis - use with caution.
 
 ```{r}
-# Add cell type labels based on marker expression
-sparse <- AddModuleScore(sparse, features = list(
-  "B_cells" = "MS4A1",
-  "CD8_T_cells" = c("CD8A", "GNLY"),
-  "CD4_T_cells" = c("CD3E", "CD8A", "GNLY"),
-  "NK_cells" = c("GNLY", "CD3E"),
-  "NKT_cells" = c("GNLY", "CD3E"),
-  "Monocytes" = "CD14"
-))
-
+pbmc <- RunUMAP(pbmc, dims = 1:10)
 ```
+
+```{r}
+DimPlot(pbmc, reduction = "umap") # fetches the umap we just ran
+```
+
+### Save Object
+
+At this point, we should save the object so we can easily load it later.
+
+```{r}
+saveRDS(pbmc, file = "cibersort_result.rds")
+```
+
+## Finding Differentially Expressed Features (Cluster Biomarkers)
 
 We can now assign cell types. We assign the cell type based on the criteria listed in the supplementary methods.
 
 ```{r}
 # Custom logic for assigning cell types
-sparse$cell_type <- ifelse(FetchData(sparse, vars = "MS4A1") > 1, "B cells",
-  ifelse(FetchData(sparse, vars = "CD8A") > 1 & FetchData(sparse, vars = "GNLY") < 1, "CD8 T cells",
-    ifelse(FetchData(sparse, vars = "CD3E") > 1 & FetchData(sparse, vars = "CD8A") < 1 & FetchData(sparse, vars = "GNLY") < 1, "CD4 T cells",
-      ifelse(FetchData(sparse, vars = "GNLY") > 1 & FetchData(sparse, vars = "CD3E") < 1, "NK cells",
-        ifelse(FetchData(sparse, vars = "GNLY") > 1 & FetchData(sparse, vars = "CD3E") > 1, "NKT cells",
-          ifelse(FetchData(sparse, vars = "CD14") > 1, "Monocytes", "Unassigned")
+pbmc$cell_type <- ifelse(FetchData(pbmc, vars = "MS4A1") > 1, "B cells",
+  ifelse(FetchData(pbmc, vars = "CD8A") > 1 & FetchData(pbmc, vars = "GNLY") < 1, "CD8 T cells",
+    ifelse(FetchData(pbmc, vars = "CD3E") > 1 & FetchData(pbmc, vars = "CD8A") < 1 & FetchData(pbmc, vars = "GNLY") < 1, "CD4 T cells",
+      ifelse(FetchData(pbmc, vars = "GNLY") > 1 & FetchData(pbmc, vars = "CD3E") < 1, "NK cells",
+        ifelse(FetchData(pbmc, vars = "GNLY") > 1 & FetchData(pbmc, vars = "CD3E") > 1, "NKT cells",
+          ifelse(FetchData(pbmc, vars = "CD14") > 1, "Monocytes", "Unassigned")
         )
       )
     )
@@ -222,7 +283,7 @@ Let's take a look at the results.
 
 ```{r}
 # View clusters and cell types
-sparse <- RunUMAP(object = sparse, dims = 1:10)
-DimPlot(object = sparse, reduction = "umap")
-table(sparse$seurat_clusters, sparse$cell_type)
+pbmc <- RunUMAP(object = pbmc, dims = 1:10)
+DimPlot(object = pbmc, reduction = "umap")
+table(pbmc$seurat_clusters, pbmc$cell_type)
 ```
